@@ -13,13 +13,14 @@ Model (standard library only, deterministic, no network):
     simultaneous-global launches (whose hour-1 print is a pre-unlock trickle)
     are a different regime and are excluded.
   * For each rolling comparable, take the log ratio of each release-day hour's
-    viewers to its hour-1 print.  The forecast median for hour h is the
-    weighted median of those log ratios across comparables (console-only
-    launches weighted up, early-access-contaminated ones down), adjusted by a
-    per-hour regression on log(hour-1 print): big hour-1 prints (a huge
-    UK/Australia midnight audience) mean a flatter day, small ones mean a
-    much bigger rise into the US evening.  The spread is the weighted
-    standard deviation of the adjusted log ratios at that hour.
+    viewers to its hour-1 print.  The forecast centre for hour h is the
+    midpoint of the weighted mean and the weighted median of those log ratios
+    across comparables (console-only launches weighted up, early-access-
+    contaminated ones down), adjusted by a per-hour regression on log(hour-1
+    print): big hour-1 prints (a huge UK/Australia midnight audience) mean a
+    flatter day, small ones mean a much bigger rise into the US evening.  The
+    spread is the weighted standard deviation of the adjusted log ratios at
+    that hour.
   * Quantiles are lognormal: q_tau = p1 * exp(mu_h + z_tau * sigma_h), with
     z = (-1.645, -0.674, 0, 0.674, 1.645).
   * If no usable comparable exists, fall back to the house persistence
@@ -28,7 +29,7 @@ Model (standard library only, deterministic, no network):
 
 Validation (leave-one-out over the 12 rolling-midnight comparables, and the
 four practice cases scored against SullyGnome's published hourly averages):
-  * rolling LOO pinball loss 0.258 vs 0.357 for persistence
+  * rolling LOO pinball loss 0.249 vs 0.357 for persistence
   * practice mean pinball loss 0.155 vs 0.387 for persistence
 """
 
@@ -52,6 +53,15 @@ Z = [-1.645, -0.674, 0.0, 0.674, 1.645]
 # slightly wide for pinball loss; 0.9 was best on both the practice cases
 # and leave-one-out over the rolling comparables.
 SPREAD_MULT = 0.9
+# Centre blend: the per-hour log ratios across launches are right-skewed (a
+# few launches explode into the US evening), so the pure weighted median
+# systematically under-forecasts the afternoon/evening peak (leave-one-out
+# mean log-median error -0.11..-0.18 at hours 13-19). The centre is the
+# midpoint of the weighted mean and the weighted median: the mean follows
+# the skew, the median keeps it robust. 0.5 is the natural midpoint, and
+# the result is not knife-edge (0.25-0.75 all beat the pure median on LOO
+# with the practice mean within 0.001).
+MU_BLEND = 0.5
 # Floor on the per-hour log spread, so a freakishly tight hour still gets a
 # sane band.
 SD_FLOOR = 0.10
@@ -190,11 +200,16 @@ def _fit(case):
     if not games or not rows:
         return None
 
-    # Per-hour weighted median log ratio.
+    # Per-hour centre log ratio: blend of weighted mean and weighted median
+    # (see MU_BLEND).
     mu = {}
     for hour in range(2, 25):
         hour_rows = [(r, w) for _, hh, r, w, _ in rows if hh == hour]
-        mu[hour] = _wmedian(hour_rows) if hour_rows else 0.0
+        if hour_rows:
+            mu[hour] = (MU_BLEND * _wmean(hour_rows)
+                        + (1.0 - MU_BLEND) * _wmedian(hour_rows))
+        else:
+            mu[hour] = 0.0
 
     # Centre of log hour-1 prints (weighted mean over games).
     total_w = sum(w for _, w in games.values())
